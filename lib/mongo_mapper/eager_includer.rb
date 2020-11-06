@@ -85,9 +85,9 @@ private
         record.send(foreign_key)
       end
     when :has_many_in
-      @records.map do |record|
+      @records.flat_map do |record|
         record.send(foreign_keys)
-      end.flatten
+      end
     end.uniq
   end
 
@@ -107,15 +107,17 @@ private
 
   def eager_include_has_many(&block)
     load_association_records!
+    indexed_association_records = @association_records.group_by do |ar|
+      ar_primary_key = ar.send(primary_key)
+      if ar_primary_key.is_a?(Array)
+        raise "has_many primary_key is an array"
+      end
+      ar_primary_key
+    end
 
     @records.each do |record|
-      matching_association_records = @association_records.select do |association_record|
-        record_or_records = association_record.send(primary_key)
-        if record_or_records.is_a?(Array)
-          record_or_records.include?(record.id)
-        else
-          record_or_records == record.id
-        end
+      matching_association_records = @association_records.flat_map do |association_record|
+        indexed_association_records[record.id]
       end
 
       setup_association(record, matching_association_records)
@@ -124,11 +126,12 @@ private
 
   def eager_include_has_one(&block)
     load_association_records!
+    indexed_association_records = @association_records.index_by do |ar|
+      ar.send(primary_key)
+    end
 
     @records.each do |record|
-      matching_association_record = @association_records.detect do |association_record|
-        association_record.send(primary_key) == record.id
-      end
+      matching_association_record = indexed_association_records[record.id]
 
       setup_association(record, matching_association_record)
     end
@@ -136,11 +139,10 @@ private
 
   def eager_include_belongs_to(&block)
     load_association_records!
+    indexed_association_records = @association_records.index_by(&:id)
 
     @records.each do |record|
-      matching_association_record = @association_records.detect do |association_record|
-        association_record.id == record.send(foreign_key)
-      end
+      matching_association_record = indexed_association_records[record.send(foreign_key)]
 
       setup_association(record, matching_association_record)
     end
@@ -148,12 +150,13 @@ private
 
   def eager_include_has_many_in(&block)
     load_association_records!
+    indexed_association_records = @association_records.group_by(&:id)
 
     @records.each do |record|
       association_record_ids = record.send(foreign_keys)
 
-      matching_association_records = association_record_ids.map do |association_record_id|
-        @association_records.detect { |association_record| association_record.id == association_record_id }
+      matching_association_records = association_record_ids.flat_map do |association_record_id|
+        indexed_association_records[association_record_id]
       end
 
       setup_association(record, matching_association_records)
